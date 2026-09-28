@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>g</title>
+<title>OpusSkate -- HTML/ThreeJS port -- originally by Bijan Bowen</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #000; }
 </style>
@@ -1974,7 +1974,10 @@ function buildLevel() {
   parkedCars();
   buildPromenade();
   buildSkyline();
-  letterPos.unshift(v3(28, SH + 5.4, -34.5));   // 'S' high above the fountain spout
+  // 'S' floats above the west rim of the fountain, right on the line of the
+  // plaza kicker (19.6, -34.5) that points at it: push at the kicker, ollie off
+  // the lip and you fly through it
+  letterPos.unshift(v3(23.2, SH + 3.0, -34.5));
   // order the letters S K A T E
   const lp = letterPos;   // [S, A, T, K, E]
   letterPos = [lp[0], lp[3], lp[1], lp[2], lp[4]];
@@ -2198,13 +2201,38 @@ class Player {
   }
   respawnAfterBail() {
     const p = this.bodyPos.clone();
+    let y = this.yaw;
     if (p.z < RIVER_EDGE_Z + 0.8) { p.z = RIVER_EDGE_Z + 3.0; p.y = SH + 1.0; }
+    // never respawn in (or on the rim of) a fountain pool: put the skater back
+    // on the paving just outside it, facing away from the water
+    for (const pool of world.pools) {
+      const dx = p.x - pool.x, dz = p.z - pool.z, d = Math.hypot(dx, dz);
+      if (d > pool.r + 1.0) continue;
+      const a0 = d > 1e-3 ? Math.atan2(dx, dz) : this.yaw;
+      // pick the direction closest to where we fell in that has clear, flat
+      // ground to roll away on (not in front of a kicker, ledge, ...)
+      let best = a0;
+      for (let k = 0; k < 16; k++) {
+        const a = a0 + (k === 0 ? 0 : (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (TAU / 16));
+        const o = fwdYaw(a);
+        let ok = true;
+        for (let r = pool.r + 1.6; r <= pool.r + 5.0 && ok; r += 0.7) {
+          const q = v3(pool.x + o.x * r, SH + 0.3, pool.z + o.z * r);
+          if (world.pointBlocked(q) || world.ground(q.x, q.z, q.y).h > SH + 0.1) ok = false;
+        }
+        if (ok) { best = a; break; }
+      }
+      const out = fwdYaw(best);
+      p.x = pool.x + out.x * (pool.r + 1.6);
+      p.z = pool.z + out.z * (pool.r + 1.6);
+      p.y = SH + 0.3;
+      y = best;
+    }
     p.y = world.ground(p.x, p.z, Math.max(p.y, 0) + 0.5).h;
     // never respawn perched on a thin thing: drop to the lowest nearby surface
     const v = v3(0, 0, 0);
     world.collideWalls(p, v, 0.35, p.y + STEP_UP, 1.6);
     p.y = world.ground(p.x, p.z, p.y + 0.3).h;
-    const y = this.yaw;
     this.state = ST_RIDE;
     this.pos = p;
     this.vel = v3(0, 0, 0);
@@ -2282,13 +2310,13 @@ class Player {
     this.vel.addScaledVector(sub(g, mul(this.n, dot(g, this.n))), dt);
     let s = dot(this.vel, ft);
     let lat = sub(sub(this.vel, mul(ft, s)), mul(this.n, dot(this.vel, this.n)));
-    this.pushing = false;
     this.braking = false;
     const travel = s < -0.15 ? -1 : 1;
-    if (ctrl.up && !manual && !this.crouching && Math.abs(s) < PUSH_MAX) {
-      s += travel * PUSH_ACC * dt;
-      this.pushing = true;
-    }
+    // 'pushing' drives the animation: it stays on while W is held even at top
+    // speed (where the thrust itself cuts out) so the foot does not twitch
+    // back and forth every time the speed hovers around PUSH_MAX
+    this.pushing = !!ctrl.up && !manual && !this.crouching;
+    if (this.pushing && Math.abs(s) < PUSH_MAX) s += travel * PUSH_ACC * dt;
     if (ctrl.down && !manual) {
       s = approach(s, 0, 6.5 * dt);
       this.braking = Math.abs(s) > 0.5;
@@ -2297,8 +2325,11 @@ class Player {
     lat = mul(lat, Math.exp(-11 * dt));
     this.vel = add(mul(ft, s), lat);
     if (len(this.vel) > MAX_SPEED) this.vel = mul(norm(this.vel), MAX_SPEED);
-    this.pushPhase = this.pushing ? this.pushPhase + dt * 1.8 : Math.max(0, this.pushPhase - dt * 2);
-    if (!this.pushing && this.pushPhase > 1) this.pushPhase = 0;
+    // push cycle always runs forward; on release it finishes the current stroke
+    if (this.pushing || this.pushPhase > 0) {
+      this.pushPhase += dt * 1.8;
+      if (this.pushPhase >= 1) this.pushPhase = this.pushing ? this.pushPhase - 1 : 0;
+    }
 
     // move + collide
     const np = this.pos.clone().addScaledVector(this.vel, dt);
@@ -2692,7 +2723,7 @@ class Player {
     if (this.state !== ST_BAIL) {
       for (let i = 0; i < 5 && i < letterPos.length; i++) {
         if (this.letters[i]) continue;
-        if (len(sub(add(this.pos, v3(0, 0.9, 0)), letterPos[i])) < 1.4) {
+        if (len(sub(add(this.pos, v3(0, 0.9, 0)), letterPos[i])) < 1.7) {
           this.letters[i] = true;
           this.lettersGot++;
           this.score += 250;
@@ -4074,7 +4105,26 @@ function drawGameHud(pl, time, sessionLeft, session, helpPage, helpAlpha, vp, ca
     hud.rect(bx, by, 28 * U, 30 * U, got ? hexc(0xffd23a) : Col(20, 20, 26), got ? 0.95 : 0.55);
     hud.text(bx + 14 * U, by + 8 * U, 2 * U, LETTER_CHARS[i], got ? Col(20, 20, 20) : Col(120, 120, 130), 1, 1, false);
   }
-  hud.text(hud.W - 20 * U, 58 * U, 1.5 * U, 'FIND THE FLOATING LETTERS', Col(200, 200, 200), 0.7, 2);
+  {   // pointer to the nearest letter still missing (relative to the view direction)
+    let bi = -1, bd = 1e9;
+    for (let i = 0; i < 5 && i < letterPos.length; i++) {
+      if (pl.letters[i]) continue;
+      const d = len(sub(letterPos[i], pl.pos));
+      if (d < bd) { bd = d; bi = i; }
+    }
+    if (bi < 0) {
+      hud.text(hud.W - 20 * U, 58 * U, 1.5 * U, 'ALL LETTERS FOUND', hexc(0xffd23a), 0.8, 2);
+    } else {
+      const view = v3(pl.pos.x - cam.x, 0, pl.pos.z - cam.z);
+      const to = v3(letterPos[bi].x - pl.pos.x, 0, letterPos[bi].z - pl.pos.z);
+      let rel = 0;
+      if (lenXZ(view) > 1e-3 && lenXZ(to) > 1e-3) rel = wrapPi(yawOf(to) - yawOf(view));
+      const ar = Math.abs(rel);
+      const arrow = ar < 0.5 ? '^' : ar > 2.6 ? 'v' : rel > 0 ? '<' : '>';
+      const hgt = letterPos[bi].y - pl.pos.y > 2.2 ? ' HIGH' : '';
+      hud.text(hud.W - 20 * U, 58 * U, 1.5 * U, `NEXT ${LETTER_CHARS[bi]}  ${Math.round(bd)}M${hgt}  ${arrow}`, Col(200, 200, 200), 0.8, 2);
+    }
+  }
   // speech bubbles
   for (const b of bubbles) {
     if (len(sub(b.pos, cam)) > 40 || !projectToScreen(vp, b.pos, _proj)) continue;
@@ -4584,7 +4634,13 @@ function frameLoop(now) {
     cam.look = v3(12 + 6 * Math.sin(time * 0.04), 2, -30);
     cam.fov = 60;
   } else {
+    // follow the same interpolated position the skater is drawn at, otherwise
+    // the camera steps with the 120 Hz physics while the body glides => jitter
+    const simPos = P.pos.clone();
+    const alpha = mode === GM_PLAY ? acc / (1 / 120) : 1;
+    if (P.state !== ST_BAIL && len(sub(P.pos, P.prevPos)) < 1) P.pos = lerp3(P.prevPos, P.pos, sat(alpha));
     updateCamera(frameDt, P);
+    P.pos = simPos;
   }
   {   // water ambience from nearby fountains/hydrants
     let w = 0;
