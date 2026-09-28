@@ -1974,10 +1974,7 @@ function buildLevel() {
   parkedCars();
   buildPromenade();
   buildSkyline();
-  // 'S' floats above the west rim of the fountain, right on the line of the
-  // plaza kicker (19.6, -34.5) that points at it: push at the kicker, ollie off
-  // the lip and you fly through it
-  letterPos.unshift(v3(23.2, SH + 3.0, -34.5));
+  letterPos.unshift(v3(28, SH + 5.4, -34.5));   // 'S' high above the fountain spout
   // order the letters S K A T E
   const lp = letterPos;   // [S, A, T, K, E]
   letterPos = [lp[0], lp[3], lp[1], lp[2], lp[4]];
